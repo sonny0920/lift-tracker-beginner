@@ -968,41 +968,72 @@ function updateNudge(){
   }
 }
 
-/* ── rest timer ────────────────────────────────────────────────────────────── */
-let restLeft=0, restTid=null, audioCtx=null;
+/* ── rest timer ────────────────────────────────────────────────────────────────
+   Anchored to a wall-clock end timestamp, not tick counting: browsers freeze JS
+   timers when the app is backgrounded, so remaining time is always recomputed
+   from Date.now(). Switching to another app can't stall the countdown. */
+let restEnd=0, restDoneFired=true, restTid=null, audioCtx=null;
 function fmtClock(s){ const m=Math.floor(s/60); const ss=String(s%60).padStart(2,"0"); return m+":"+ss; }
+function restRemaining(){ return Math.ceil((restEnd - Date.now())/1000); }
 function paintRest(){
-  const t=document.getElementById("restTime"); if(t) t.textContent=fmtClock(Math.max(0,restLeft));
+  const t=document.getElementById("restTime"); if(t) t.textContent=fmtClock(Math.max(0,restRemaining()));
 }
 function startRest(){
-  restLeft = store.restSec || 120;
+  restEnd = Date.now() + (store.restSec || 120)*1000;
+  restDoneFired = false;
+  askNotify();
   const bar=document.getElementById("restBar");
   bar.hidden=false; bar.classList.remove("ring");
   document.getElementById("restLbl").textContent="Rest";
   paintRest();
   clearInterval(restTid);
-  restTid=setInterval(()=>{
-    restLeft--;
-    paintRest();
-    if(restLeft<=0){ clearInterval(restTid); restDone(); }
-  },1000);
+  restTid=setInterval(tickRest, 500);
+}
+function tickRest(){
+  if(restDoneFired) return;
+  paintRest();
+  if(restRemaining()<=0){ clearInterval(restTid); restDone(); }
 }
 function restDone(){
+  if(restDoneFired) return;
+  restDoneFired = true;
   const bar=document.getElementById("restBar");
   bar.classList.add("ring");
   document.getElementById("restLbl").textContent="Go!";
   document.getElementById("restTime").textContent="0:00";
-  buzz();
+  if(document.visibilityState==="visible") buzz();
+  else notifyRestDone();
   setTimeout(hideRest, 4000);
 }
-function hideRest(){ clearInterval(restTid); const b=document.getElementById("restBar"); if(b){ b.hidden=true; b.classList.remove("ring"); } }
+function hideRest(){ clearInterval(restTid); restDoneFired=true; const b=document.getElementById("restBar"); if(b){ b.hidden=true; b.classList.remove("ring"); } }
 function adjustRest(delta){
-  if(document.getElementById("restBar").hidden) return;
-  restLeft=Math.max(5, restLeft+delta);
+  if(document.getElementById("restBar").hidden || restDoneFired) return;
+  restEnd = Math.max(Date.now()+5000, restEnd + delta*1000);
   store.restSec=Math.max(15, (store.restSec||120)+delta); save();  // remember preference
   document.getElementById("restBar").classList.remove("ring");
   document.getElementById("restLbl").textContent="Rest";
   paintRest();
+}
+// snap to the true remaining time the moment the app returns to the foreground
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState!=="visible" || restDoneFired) return;
+  const bar=document.getElementById("restBar");
+  if(!bar || bar.hidden) return;
+  if(restRemaining()<=0){ clearInterval(restTid); restDone(); }
+  else paintRest();
+});
+function askNotify(){
+  if(!("Notification" in window)) return;
+  if(Notification.permission==="default"){ try{ Notification.requestPermission(); }catch(e){} }
+}
+function notifyRestDone(){
+  if(!("Notification" in window) || Notification.permission!=="granted") return;
+  const opts={ body:"Rest is up — hit your next set.", icon:"icon-192.png", badge:"icon-192.png",
+               tag:"rest-timer", renotify:true, vibrate:[120,60,120] };
+  const fallback=()=>{ try{ new Notification("Go! 💪", opts); }catch(e){} };
+  if(navigator.serviceWorker){
+    navigator.serviceWorker.ready.then(r=>r.showNotification("Go! 💪", opts)).catch(fallback);
+  } else fallback();
 }
 function buzz(){
   if(navigator.vibrate) navigator.vibrate([120,60,120]);

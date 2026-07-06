@@ -1,12 +1,23 @@
 /* The Logbook — service worker for offline use.
    HTML uses network-first (so new deploys show up), everything else
    (fonts, icons) is cache-first with runtime caching. */
-const CACHE = "logbook-v1";
+const CACHE = "logbook-v2";
 const CORE = ["./", "./index.html", "./manifest.json"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).catch(()=>{}));
   self.skipWaiting();
+});
+
+// tapping the rest-timer notification brings the app to the front
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+      for (const c of list) { if ("focus" in c) return c.focus(); }
+      return self.clients.openWindow("./");
+    })
+  );
 });
 
 self.addEventListener("activate", e => {
